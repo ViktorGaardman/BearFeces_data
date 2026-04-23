@@ -1,4 +1,4 @@
-library('tidyverse')
+library(tidyverse)
 library(vegan)
 
 df <- read.csv("combined_dataset_bearfeces.csv")
@@ -164,10 +164,43 @@ ggplot(df_richness, aes(x = North, y = sp_richness, color = dung_age)) +
     axis.line.x = element_line(color = "black"),
     axis.line = element_line(color = "black"))
 
+### Delete non-dung species
+
+df <- df %>% 
+  mutate(Species = str_trim(Species)) %>% 
+  filter(!Species %in% c(
+    "Apion_simile",
+    "Cyphon punctipennis",
+    "Deporaus betulae",
+    "Epuraea sp.",
+    "Glischrochilus quadripunctatus",
+    "EI KUORIAISIA",
+    "Malthodes fuscus",
+    "Phloeonomus sjobergi",
+    "Strophosoma capitatum",
+    "Zyras humeralis",
+    "Nicrophorus investigator",
+    "Nicrophorus vespilloides",
+    "Pterostichus diligens"
+  ))
+  
+#Split doy into spring, summer, autumn ish.
+#Split dung age into fresh (1-2 days), intermediate (3-5 days), old (5-8),
+#very old 8+
+
+df <- df %>%
+  mutate(Season = case_when(
+    doy >= 152 & doy < 196  ~ "Early_summer",   #Samples from 1st June - 15th July
+    doy >= 197 & doy < 243 ~ "Late_summer", #Samples from 16th of July-1st of sep
+    doy >= 244 & doy <= 284 ~ "Early_autumn", #Samples from 1st of sep-11th of October
+    TRUE ~ NA_character_
+  ))
+
+
 ##Create wide-format df
 
 df_wide <- df %>% 
-  select(Sample, North, doy, dung_age, 
+  select(Sample, North, doy, Season, dung_age, 
          Species, Count) %>% 
   pivot_wider(
     names_from = Species,
@@ -177,31 +210,32 @@ df_wide <- df %>%
 
 #remove rows with no species
 df_wide <- df_wide %>%
-  mutate(across(5:121, ~ replace_na(.x, 0)))
-df_wide$rowsum <- rowSums(df_wide[,5:121])
+  mutate(across(5:110, ~ replace_na(.x, 0)))
+df_wide$rowsum <- rowSums(df_wide[,5:109])
 df_wide <- df_wide[df_wide$rowsum != 0, ]
 
 ####permanova
 df_clean <- df_wide %>%
+  select(-rowsum) %>% 
   filter(!is.na(dung_age),
          !is.na(North),
-         !is.na(doy))
+         !is.na(doy),
+         !is.na(Season))
 
-meta_df <- df_clean[,1:4]
-species_df <- df_clean[,5:121]
-
+meta_df <- df_clean[,1:5]
+species_df <- df_clean[,6:110] 
 
 ##Permanova
 dist_matrix <- vegdist(species_df, method = "jaccard", binary = TRUE)
 
-Permanova_mod <- adonis2(species_df ~ dung_age + North + doy  * dung_age, 
+Permanova_mod <- adonis2(species_df ~ dung_age + North * Season, 
                          data=df_clean,
                          permutations=999,
                          method = "jaccard",
                          binary = TRUE)
 
 #Check assumption of homogeneity of multivariate dispersion
-anova(betadisper(dist_matrix, df_clean$doy))
+anova(betadisper(dist_matrix, df_clean$dung_age))
 
 Permanova_mod
 
@@ -213,18 +247,19 @@ NMDS_mod <- metaMDS(species_df, distance = "jaccard", k = 2, trymax = 1000,
 #extract the site scores
 datascores = as.data.frame(scores(NMDS_mod)$sites)  
 datascores$doy = df_clean$doy
+datascores$Season = df_clean$Season
 datascores$North = df_clean$North
 datascores$dung_age = df_clean$dung_age
 
 #Add environmental variables
 env <- envfit(NMDS_mod,
-              df_clean[, c("dung_age", "doy", "North")],
+              df_clean[, c("Season", "North")],
               permutations = 999)
 
 ef <- as.data.frame(env$vectors$arrows * sqrt(env$vectors$r))
 ef$variable <- rownames(ef)
 
-nmds_plot <- ggplot(datascores, aes(NMDS1, NMDS2)) +
+nmds_plot <- ggplot(datascores, aes(NMDS1, NMDS2, color = Season)) +
   geom_point() +
   geom_segment(data = ef,
                aes(x = 0, y = 0,
@@ -251,6 +286,6 @@ nmds_plot <- ggplot(datascores, aes(NMDS1, NMDS2)) +
            label = paste("Stress =", round(NMDS_mod$stress, 3)), 
            hjust = 0.8, vjust = 0.5, size = 6)
 
-ggsave(nmds_plot, filename = "nmds_prel.png", dpi = 300,
+ggsave(nmds_plot, filename = "nmds_plot.png", dpi = 300,
        height = 5.26, width = 6.5)
 
