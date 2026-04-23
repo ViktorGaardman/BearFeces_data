@@ -1,4 +1,5 @@
 library('tidyverse')
+library(vegan)
 
 df <- read.csv("combined_dataset_bearfeces.csv")
 
@@ -117,7 +118,7 @@ ggsave(data_summary3, filename = "bear_datasum3.png",
 
 #Calculate species richness and abundance per sample
 df_richness <- df %>%
-  group_by(Sample) %>%
+  group_by(Sample, dung_age, North, doy) %>%
   summarize(
   sp_richness = n_distinct(Species),
   abundance = sum(Count)
@@ -125,5 +126,131 @@ df_richness <- df %>%
 
 #Quickplot
 
-ggplot(df_richness, aes(x = Sample, y = abundance)) +
-  geom_point()
+ggplot(df_richness, aes(x = doy, y = sp_richness, color = dung_age)) +
+  geom_point() +
+  labs(
+    x = "Day of Year",
+    y = "Species richness",
+    color = "Age of dung"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    legend.text = element_text(size = 12),     
+    legend.title = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.line.x = element_line(color = "black"),
+    axis.line = element_line(color = "black"))
+
+ggplot(df_richness, aes(x = North, y = sp_richness, color = dung_age)) +
+  geom_point() +
+  labs(
+    x = "Latitude",
+    y = "Species richness",
+    color = "Age of dung"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    legend.text = element_text(size = 12),     
+    legend.title = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.line.x = element_line(color = "black"),
+    axis.line = element_line(color = "black"))
+
+##Create wide-format df
+
+df_wide <- df %>% 
+  select(Sample, North, doy, dung_age, 
+         Species, Count) %>% 
+  pivot_wider(
+    names_from = Species,
+    values_from = Count,
+    values_fn = sum
+  )
+
+#remove rows with no species
+df_wide <- df_wide %>%
+  mutate(across(5:121, ~ replace_na(.x, 0)))
+df_wide$rowsum <- rowSums(df_wide[,5:121])
+df_wide <- df_wide[df_wide$rowsum != 0, ]
+
+####permanova
+df_clean <- df_wide %>%
+  filter(!is.na(dung_age),
+         !is.na(North),
+         !is.na(doy))
+
+meta_df <- df_clean[,1:4]
+species_df <- df_clean[,5:121]
+
+
+##Permanova
+dist_matrix <- vegdist(species_df, method = "jaccard", binary = TRUE)
+
+Permanova_mod <- adonis2(species_df ~ dung_age + North + doy  * dung_age, 
+                         data=df_clean,
+                         permutations=999,
+                         method = "jaccard",
+                         binary = TRUE)
+
+#Check assumption of homogeneity of multivariate dispersion
+anova(betadisper(dist_matrix, df_clean$doy))
+
+Permanova_mod
+
+NMDS_mod <- metaMDS(species_df, distance = "jaccard", k = 2, trymax = 1000)
+# Run twice to avoid local optimum.
+NMDS_mod <- metaMDS(species_df, distance = "jaccard", k = 2, trymax = 1000, 
+                    previous.best = NMDS_mod)
+
+#extract the site scores
+datascores = as.data.frame(scores(NMDS_mod)$sites)  
+datascores$doy = df_clean$doy
+datascores$North = df_clean$North
+datascores$dung_age = df_clean$dung_age
+
+#Add environmental variables
+env <- envfit(NMDS_mod,
+              df_clean[, c("dung_age", "doy", "North")],
+              permutations = 999)
+
+ef <- as.data.frame(env$vectors$arrows * sqrt(env$vectors$r))
+ef$variable <- rownames(ef)
+
+nmds_plot <- ggplot(datascores, aes(NMDS1, NMDS2)) +
+  geom_point() +
+  geom_segment(data = ef,
+               aes(x = 0, y = 0,
+                   xend = NMDS1,
+                   yend = NMDS2),
+               inherit.aes = FALSE,
+               arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_text(data = ef,
+            aes(x = NMDS1, y = NMDS2, label = variable),
+            inherit.aes = FALSE,
+            vjust = -0.5) +
+  theme_bw() +
+  theme(legend.position="right",
+        legend.text=element_text(size=20),
+        legend.title=element_text(size=22),
+        legend.direction='vertical',
+        axis.title.x = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.text = element_text(size = 16),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank()) + 
+  annotate("text", x = max(datascores$NMDS1), 
+           y = min(datascores$NMDS2), 
+           label = paste("Stress =", round(NMDS_mod$stress, 3)), 
+           hjust = 0.8, vjust = 0.5, size = 6)
+
+ggsave(nmds_plot, filename = "nmds_prel.png", dpi = 300,
+       height = 5.26, width = 6.5)
+
