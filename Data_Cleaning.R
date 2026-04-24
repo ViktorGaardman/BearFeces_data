@@ -6,6 +6,10 @@ beetledata <- read.csv("BearFecesData_OhterInsects.csv", sep = ";")
 
 #1. Data cleaning
 
+metadata$date_parsed <- as.Date(metadata$Date_2, format = "%d.%m.%y")
+metadata$year <- as.numeric(format(metadata$date_parsed, "%Y"))
+metadata$doy  <- as.numeric(format(metadata$date_parsed, "%j"))
+
 #Define factors, dates, and numbers
 metadata$days_old <- as.numeric(metadata$days_old)
 
@@ -37,5 +41,8 @@ beetle_with_meta <- beetledata %>%
 
 #Combine with remaining dungbeetle data
 full_df <- bind_rows(long_metadata, beetle_with_meta)
+
+
+###BASE R HANDLING
 
 write_csv(full_df, "combined_dataset_bearfeces.csv")
