@@ -5,6 +5,7 @@ library(car)
 library(MASS)
 library(DHARMa)
 library(ggeffects)
+library(patchwork)
 
 rm(list=ls())
 
@@ -56,23 +57,41 @@ rda_mod <- rda(x ~ days_old_avg * Season + North * Season, data = df_clean)
 #test significance
 anova(rda_mod, by = "margin")
 
+summary(rda_mod)
+coef(rda_mod)[c("days_old_avg:Season1", "Season1:North"), ]
+
+#The interactions are
+
+
 new_early <- subset(df_clean, Season == "Early season")
 new_late  <- subset(df_clean, Season == "Late season")
 
 early_scores <- predict(rda_mod, newdata = new_early, type = "wa")
 late_scores  <- predict(rda_mod, newdata = new_late, type = "wa")
 
-get_arrow <- function(rda_mod, term, season = NULL) {
+get_arrow <- function(rda_mod, term, season, data) {
   
   cf <- coef(rda_mod)
   
+  # find reference level (first level of factor)
+  ref_level <- levels(data$Season)[1]
+  
+  # base = reference level
   base <- cf[term, , drop = FALSE]
   
-  if (!is.null(season)) {
-    inter_name <- paste0("Season", season, ":", term)
+  # if not reference → add interaction
+  if (season != ref_level) {
     
-    if (inter_name %in% rownames(cf)) {
-      base <- base + cf[inter_name, , drop = FALSE]
+    # find correct dummy name (e.g. Season1)
+    dummy_name <- paste0("Season", which(levels(data$Season) == season) - 1)
+    
+    inter1 <- paste0(term, ":", dummy_name)
+    inter2 <- paste0(dummy_name, ":", term)
+    
+    if (inter1 %in% rownames(cf)) {
+      base <- base + cf[inter1, , drop = FALSE]
+    } else if (inter2 %in% rownames(cf)) {
+      base <- base + cf[inter2, , drop = FALSE]
     }
   }
   
@@ -106,7 +125,7 @@ ggplot(site_scores, aes(RDA1, RDA2)) +
                aes(x = 0, y = 0,
                    xend = North_RDA1,
                    yend = North_RDA2,
-                   linetype = Season),
+                   group = Season),
                color = "blue", linewidth = 1) +
   
   # Dung age arrows per season
@@ -118,6 +137,7 @@ ggplot(site_scores, aes(RDA1, RDA2)) +
                color = "darkgreen", linewidth = 1) +
   
   theme_minimal() +
+  facet_wrap(~Season)+
   theme(panel.grid = element_blank()) +
   labs(title = "Season-specific environmental effects (from interaction RDA)") 
 
@@ -167,7 +187,11 @@ rda_plot <- ggplot(site_scores, aes(RDA1, RDA2)) +
   geom_text(data = env_scores,
                   aes(label = rownames(env_scores)),
                   color = "black", size = 4) +
-  theme_bw() +
+  theme_classic() +
+  labs(
+    x = "RDA1 (82.3%)",
+    y = "RDA2 (10.4%)"
+  ) +
   theme(legend.position="right",
                 legend.text=element_text(size=12),
                 legend.title=element_text(size=14),
@@ -205,12 +229,29 @@ nrow(df_richness)
 range(df_richness$abundance)
 range(df_richness$sp_richness)
 
-ggplot(df_richness, aes(x = abundance, y = sp_richness)) +
-  geom_point()
+abu_rich <- ggplot(df_richness, aes(x = abundance, y = sp_richness)) +
+  geom_point() +
+  theme_classic()+
+  labs(
+    x = "Abundance",
+    y = "Species richness"
+  ) +
+  theme(legend.position="right",
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.direction='vertical',
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+
+ggsave(abu_rich, filename = "abundanceRichness_bearfeces.png", dpi = 300, height = 5.26,
+       width = 7.5)
 
 family_lookup <- tibble(
   Genus = c("Geotrupes", "Sciodrepoides", "Catops", "Nargus", "Aphodius", "Sphaeridium",
-            "Megasternum",  "Aacaena", 
+            "Megasternum",  "Anacaena", 
             "Cercyon", "Cryptopleurum", "Pteryx", "Ptiliolum", "Baeocrara", "Acrotrichis", "Atheta", "Acrotona", "Aleochara",
             "Omalium", "Anopleta", "Anotylus", "Anthobium", "Anthophagus", "Autalia",
             "Bisnius", "Deliphrum", "Euaesthetus", "Gabrius", "Gyrohypnus",
@@ -233,7 +274,79 @@ df_long <- df_long %>%
   mutate(Genus = word(Species, 1, sep = "\\.")) %>%
   left_join(family_lookup, by = "Genus")
 
+df_sum <- df_long %>% 
+  group_by(Family.y) %>%
+  summarize(
+    fam_richness = n_distinct(Species),
+    fam_abundance = sum(Count)
+  )
+  
 
+rich_plot <- ggplot(df_sum, aes(x = Family.y, y = fam_richness)) +
+  geom_col(width = 0.5) +
+  labs(
+    y = "Species richness"
+  ) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  theme(legend.position="right",
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.direction='vertical',
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12, angle = 25, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+
+abu_plot <- ggplot(df_sum, aes(x = Family.y, y = log10(fam_abundance))) +
+  geom_col(width = 0.5) +
+  labs(
+    y = "log10(Abundance)"
+  ) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  theme(legend.position="right",
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=14),
+        legend.direction='vertical',
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12, angle = 25, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+
+rawdata <- ggplot(df_long, aes(x = days_old_avg, y = North, color = Season)) +
+  geom_point(size = 2, alpha = 0.6)+
+  scale_color_manual(values = c("#0072B2", "#009E73")) +
+  labs(
+    x = "Dung age",
+    y ="Latitude"
+  ) +
+  theme_classic() +
+  theme(legend.position= c(0.8, 0.8),
+        legend.text=element_text(size=12),
+        legend.title=element_blank(),
+        legend.direction='vertical',
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+ 
+rawdata
+
+Fig1 <- (rawdata | abu_rich) / (abu_plot | rich_plot)+ 
+  plot_annotation(tag_levels = "A")
+
+Fig1 + 
+  plot_annotation(tag_levels = "A")
+
+ggsave(Fig1, filename = "Fig1.png", dpi = 300,
+       width = 6.5, height = 5.26)
 
 #GLM
 
@@ -258,7 +371,7 @@ richness_plot <- ggplot(df_richness, aes(x = Season, y = sp_richness)) +
   geom_point(data = pred, aes(y = predicted, x = x), color = "black", size = 6,
              inherit.aes = FALSE) +
   labs(y = "Species richness") +
-  theme_bw() +
+  theme_classic() +
   scale_color_manual(values = c("#0072B2", "#009E73")) +
   geom_errorbar(
     data = pred,
@@ -279,7 +392,6 @@ richness_plot <- ggplot(df_richness, aes(x = Season, y = sp_richness)) +
   
 
 ggsave(richness_plot, filename ="richness_plot.png", dpi =300,
-       height = 5.26, width = 6.5)
 
 glm_abu <- glm.nb(
   abundance ~  North * Season  + days_old_avg,
