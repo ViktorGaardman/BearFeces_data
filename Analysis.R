@@ -52,10 +52,12 @@ species_df <- df_clean[,26:129]
 ##RDA
 
 x <- decostand(species_df, "hellinger")
-rda_mod <- rda(x ~ days_old_avg * Season + North * Season, data = df_clean)
+rda_mod <- rda(x ~ days_old_avg * Season + Season, data = df_clean)
 
 #test significance
 anova(rda_mod, by = "margin")
+
+vif.cca(rda_mod)
 
 summary(rda_mod)
 coef(rda_mod)[c("days_old_avg:Season1", "Season1:North"), ]
@@ -104,10 +106,8 @@ arrows <- do.call(rbind, lapply(seasons, function(s) {
   
   data.frame(
     Season = s,
-    North_RDA1 = get_arrow(rda_mod, "North", s)[1],
-    North_RDA2 = get_arrow(rda_mod, "North", s)[2],
-    Dung_RDA1  = get_arrow(rda_mod, "days_old_avg", s)[1],
-    Dung_RDA2  = get_arrow(rda_mod, "days_old_avg", s)[2]
+    Dung_RDA1 = get_arrow(rda_mod, "days_old_avg", s, df_clean)[1],
+    Dung_RDA2 = get_arrow(rda_mod, "days_old_avg", s, df_clean)[2]
   )
 }))
 
@@ -119,14 +119,6 @@ ggplot(site_scores, aes(RDA1, RDA2)) +
   
   # sites
   geom_point(aes(color = Season), size = 3, alpha = 0.8) +
-  
-  # North arrows per season
-  geom_segment(data = arrows,
-               aes(x = 0, y = 0,
-                   xend = North_RDA1,
-                   yend = North_RDA2,
-                   group = Season),
-               color = "blue", linewidth = 1) +
   
   # Dung age arrows per season
   geom_segment(data = arrows,
@@ -148,7 +140,21 @@ x <- decostand(species_df, "hellinger")
 rda_mod_base <- rda(x ~ days_old_avg + Season + North, data = df_clean)
 
 #test significance
-anova(rda_mod_base, by = "margin")
+anova.cca(rda_mod_base) #Model is significant
+anova.cca(rda_mod_base, by = "axis") #Axis 1-3 are significant
+anova(rda_mod_base, by = "margin") #Term significance
+
+vif.cca(rda_mod_base)
+
+RsquareAdj(rda_mod_base)
+
+#check if db-RDA gives different results
+dbrda_mod <- capscale(species_df ~ days_old_avg + Season + North,
+                      data = df_clean,
+                      distance = "bray")
+summary(dbrda_mod)
+anova(dbrda_mod, by = "margin")
+
 
 #plot
 site_scores <- as.data.frame(scores(rda_mod_base, display = "sites"))
@@ -319,7 +325,7 @@ abu_plot <- ggplot(df_sum, aes(x = Family.y, y = log10(fam_abundance))) +
         panel.grid.major = element_blank())
 
 rawdata <- ggplot(df_long, aes(x = days_old_avg, y = North, color = Season)) +
-  geom_point(size = 2, alpha = 0.6)+
+  geom_point(size = 2, alpha = 0.6, aes(color = Season))+
   scale_color_manual(values = c("#0072B2", "#009E73")) +
   labs(
     x = "Dung age",
@@ -390,11 +396,13 @@ richness_plot <- ggplot(df_richness, aes(x = Season, y = sp_richness)) +
         panel.grid.minor = element_blank(), 
         panel.grid.major = element_blank())
   
+richness_plot
 
-ggsave(richness_plot, filename ="richness_plot.png", dpi =300,
+ggsave(richness_plot, filename ="richness_plot.png", 
+       dpi =300, width = 6, height = 5)
 
 glm_abu <- glm.nb(
-  abundance ~  North * Season  + days_old_avg,
+  abundance ~  North + Season  + days_old_avg,
   data = df_richness)
 
 Anova(glm_abu, type = c('3'))
