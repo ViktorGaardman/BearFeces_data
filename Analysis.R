@@ -26,6 +26,8 @@ df <- df %>%
     TRUE ~ NA_character_
   ))
 
+#Make months numeric
+df$new_month <- as.integer(format(as.Date(df$date), "%m")) - 4
 
 #remove rows with no species
 df <- df %>%
@@ -44,17 +46,22 @@ df_clean <- df %>%
          !is.na(doy),
          !is.na(Season))
 
+#keep only columns with species occurences
 
-meta_df <- df_clean[,c(1:25,130:136)]
-species_df <- df_clean[,26:129] 
+df_clean <- df_clean[, colSums(df_clean[,26:129]) > 0]
+
+meta_df <- df_clean[,c(1:24,128:135)]
+species_df <- df_clean[,25:127] 
 
 
 ##RDA
 
 x <- decostand(species_df, "hellinger")
-rda_mod <- rda(x ~ days_old_avg * Season + Season, data = df_clean)
+rda_mod <- rda(x ~ days_old_avg * Season + North, data = df_clean)
 
 #test significance
+anova.cca(rda_mod) #Model is significant
+anova.cca(rda_mod, by = "axis") #Axis 1-4 are significant
 anova(rda_mod, by = "margin")
 
 vif.cca(rda_mod)
@@ -500,3 +507,54 @@ ggsave(nmds_plot, filename = "nmds_plot.png", dpi = 300,
 
 ggplot(df_clean, aes(x = dung_age_avg, y = North, color = Season)) +
   geom_point()
+
+
+
+####Comparison to Hanski data
+#Define environmental variables
+
+species_mat <- as.matrix(species_df)
+storage.mode(species_mat) <- "numeric"
+
+dung_age <- as.numeric(df_clean$days_old_avg)
+Month <- as.numeric(df_clean$new_month)
+
+mu_age <- colSums(species_mat  * dung_age) / colSums(species_mat )
+Wsu_age <- colSums(
+  species_mat * (outer(dung_age, rep(1, ncol(species_mat))) - 
+                   matrix(mu_age, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                          byrow = TRUE))^2
+) / colSums(species_mat)
+
+
+mu_month <- colSums(species_mat  * Month) / colSums(species_mat )
+Wsu_month <- colSums(
+  species_mat * (outer(Month, rep(1, ncol(species_mat))) - 
+                   matrix(mu_month, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                          byrow = TRUE))^2
+) / colSums(species_mat)
+
+#cleaner wsu (chekc if it gives the same results)
+Wsu_age2 <- apply(species_mat, 2, function(x) {
+  m <- sum(x * dung_age) / sum(x)
+  sum(x * (dung_age - m)^2) / sum(x)
+})
+
+res <-data.frame(
+  species = colnames(species_df),
+  Wsu_age = Wsu_age,
+  wsu_age2 = Wsu_age2)
+
+result <- data.frame(
+  species = colnames(species_df),
+  mu_age = mu_age,
+  Wsu_age = Wsu_age,
+  mu_month = mu_month,
+  Wsu_month = Wsu_month
+)
+
+#Norwegian version
+
+#Combine with Hanski data
+
+
