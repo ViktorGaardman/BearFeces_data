@@ -48,10 +48,12 @@ df_clean <- df %>%
 
 #keep only columns with species occurences
 
-df_clean <- df_clean[, colSums(df_clean[,26:129]) > 0]
+keep <- colSums(df_clean[, 26:129]) > 0
 
-meta_df <- df_clean[,c(1:24,128:135)]
-species_df <- df_clean[,25:127] 
+df_clean <- df_clean[, c(c(1:25, 130:137), which(keep) + 25)]
+
+meta_df <- df_clean[,1:33]
+species_df <- df_clean[,34:136] 
 
 
 ##RDA
@@ -222,7 +224,7 @@ ggsave(rda_plot, filename = "RDA_bearfeces.png", dpi = 300, height = 5.26,
 #Calculate species richness and abundance per sample
 df_long <-  df_clean %>% 
   pivot_longer(
-    cols = -c(1:25,130:136),
+    cols = -c(1:33),
     names_to = "Species",
     values_to = "Count"
   ) %>% 
@@ -421,95 +423,6 @@ testZeroInflation(sim_res)
 #Model is decent. Nothing influences abundances
 
 
-##Permanova (add random effect of year)
-dist_matrix <- vegdist(species_df, method = "bray")
-
-Permanova_mod <- adonis2(species_df ~ days_old_avg * Season + Season * North, 
-                         data=df_clean,
-                         permutations=999,
-                         method = "bray",
-                         #         binary = TRUE,
-                         by = "margin")
-
-
-Permanova_mod
-
-#Check assumption of homogeneity of multivariate dispersion
-anova(betadisper(dist_matrix, df_clean$days_old_avg))
-
-NMDS_mod <- metaMDS(species_df, distance = "bray", k = 2, trymax = 5000)
-# Run twice to avoid local optimum.
-NMDS_mod <- metaMDS(species_df, distance = "bray", k = 2, trymax = 1000, 
-                    previous.best = NMDS_mod)
-
-#extract the site scores
-datascores = as.data.frame(scores(NMDS_mod)$sites)  
-datascores$doy = df_clean$doy
-datascores$Season = df_clean$Season
-datascores$North = df_clean$North
-datascores$days_old_avg = df_clean$days_old_avg
-
-#Add environmental variables
-env <- envfit(NMDS_mod,
-              df_clean[, c("North", "days_old_avg")],
-              permutations = 999)
-
-ef <- as.data.frame(env$vectors$arrows * sqrt(env$vectors$r))
-ef$variable <- rownames(ef)
-
-datascores <- datascores %>%
-  mutate(Season = fct_recode(Season,
-                             "Late summer" = "Late_summer",
-                             "Early summer" = "Early_summer",
-                             "Early autumn" = "Early_autumn"
-  ))
-
-
-datascores <- datascores %>%
-  mutate(Season = fct_relevel(Season,
-                              "Early summer", "Late summer", "Early autumn"
-  ))
-
-nmds_plot <- ggplot(datascores, aes(NMDS1, NMDS2, color = Season)) +
-  geom_point(size = 3) +
-  geom_segment(data = ef,
-               aes(x = 0, y = 0,
-                   xend = NMDS1,
-                   yend = NMDS2),
-               inherit.aes = FALSE,
-               arrow = arrow(length = unit(0.4, "cm")),
-               linewidth = 1.5) +
-  geom_text(data = ef,
-            aes(x = NMDS1, y = NMDS2, label = variable),
-            inherit.aes = FALSE,
-            vjust = -0.5,
-            size = 6) +
-  scale_color_manual(values = c("#0072B2", "#CC79A7", "#D55E00")) +
-  theme_bw() +
-  theme(legend.position="right",
-        legend.text=element_text(size=20),
-        legend.title=element_text(size=22),
-        legend.direction='vertical',
-        axis.title.x = element_text(size = 20),
-        axis.title.y = element_text(size = 20),
-        axis.text = element_text(size = 16),
-        panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank()) + 
-  annotate("text", x = max(datascores$NMDS1), 
-           y = min(datascores$NMDS2), 
-           label = paste("Stress =", round(NMDS_mod$stress, 3)), 
-           hjust = 0.8, vjust = 0.5, size = 6)
-
-nmds_plot
-
-ggsave(nmds_plot, filename = "nmds_plot.png", dpi = 300,
-       height = 5.26, width = 6.5)
-
-ggplot(df_clean, aes(x = dung_age_avg, y = North, color = Season)) +
-  geom_point()
-
-
-
 ####Comparison to Hanski data
 #Define environmental variables
 
@@ -519,42 +432,54 @@ storage.mode(species_mat) <- "numeric"
 dung_age <- as.numeric(df_clean$days_old_avg)
 Month <- as.numeric(df_clean$new_month)
 
-mu_age <- colSums(species_mat  * dung_age) / colSums(species_mat )
-Wsu_age <- colSums(
+succession <- colSums(species_mat  * dung_age) / colSums(species_mat )
+Wsucc <- colSums(
   species_mat * (outer(dung_age, rep(1, ncol(species_mat))) - 
-                   matrix(mu_age, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                   matrix(succession, nrow = nrow(species_mat), ncol = ncol(species_mat),
                           byrow = TRUE))^2
 ) / colSums(species_mat)
 
 
-mu_month <- colSums(species_mat  * Month) / colSums(species_mat )
-Wsu_month <- colSums(
+Season <- colSums(species_mat  * Month) / colSums(species_mat )
+Wseas <- colSums(
   species_mat * (outer(Month, rep(1, ncol(species_mat))) - 
-                   matrix(mu_month, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                   matrix(Season, nrow = nrow(species_mat), ncol = ncol(species_mat),
                           byrow = TRUE))^2
 ) / colSums(species_mat)
 
-#cleaner wsu (chekc if it gives the same results)
-Wsu_age2 <- apply(species_mat, 2, function(x) {
-  m <- sum(x * dung_age) / sum(x)
-  sum(x * (dung_age - m)^2) / sum(x)
-})
 
-res <-data.frame(
+dung_data <- data.frame(
   species = colnames(species_df),
-  Wsu_age = Wsu_age,
-  wsu_age2 = Wsu_age2)
-
-result <- data.frame(
-  species = colnames(species_df),
-  mu_age = mu_age,
-  Wsu_age = Wsu_age,
-  mu_month = mu_month,
-  Wsu_month = Wsu_month
+  succession = succession,
+  Wsucc_b = Wsucc,
+  Season = Season,
+  Wseas_b = Wseas
 )
 
-#Norwegian version
+#scale w values to 0-1 scale
+scale_01 <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+}
 
-#Combine with Hanski data
+dung_data$Wseas   <- scale_01(dung_data$Wseas_b)
+dung_data$Wsucc <- scale_01(dung_data$Wsucc_b)
 
+#Add family ID
+dung_data <- dung_data %>%
+  mutate(Genus = word(species, 1, sep = "_")) %>%
+  left_join(family_lookup, by = "Genus")
 
+#Add abundances
+total_abu <- df_long %>% 
+  group_by(Species) %>% 
+  summarize(
+    Total = sum(Count)
+  )
+
+names(total_abu) <- c("species", "Abundance")
+
+dung_df <-merge(dung_data, total_abu, by = "species")
+
+#Combine with Hanski cow data
+
+cow_df <- read.csv("Hanski_data.csv", sep = ";")
