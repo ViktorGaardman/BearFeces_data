@@ -13,50 +13,340 @@ options(contrasts = c("contr.sum", "contr.poly"))
 
 set.seed(123)
 
-df <- read.csv("clean_df.csv", sep = ";")
+df <- read.csv("clean_bear_long.csv", sep = ",")
+
+#Define variables
+
+#Add information on trophic level
+
+
+copro_names <- c("Aphodius", "Geotrupes", "Aploderus",
+                 "Oxytelus", "Platystethus", "Proteinus",
+                 "Megarthrus", "Cryptopleurum", "Megasternum", 
+                 "Cercyon", "Sphaeridium", "Helophorus", "Acrotrichis",
+                 "Anotylus", "Sciodrepoides", "Scaphisoma",
+                 "Nargus", "Catops", "Anacaena", "Pteryx",
+                 "Ptiliolum", "Baeocrara")
+
+carni_names <- c("Paralister", "Hister", "Atholus",
+                 "Sphaerites", "Acrolocha", "Omalium",
+                 "Deliphrum", "Arpedium", "Stenus", "Lithocharis",
+                 "Stilicus", "Lathrobium", "Gyrohypnus", "Xantholinus",
+                 "Othius", "Philonthus", "Ontholestes", "Quedius",
+                 "Mycetoporus", "Bolitobius", "Tachyporus", "Tachinus",
+                 "Lecuoparyphus", "Placusa", "Autalia",
+                 "Falagria", "Cordalia", "Amischa", "Sipalia",
+                 "Atheta","Acrostiba", "Oxypoda", "Aleochara",
+                 "Tinotus", "Bisnius", "Liogluta", 
+                 "Euaesthetus", "Anthobium", "Anthophagus",
+                 "Xylodromus", "Acrotona", "Anopleta", 
+                 "Pachyatheta", "Gabrius")
 
 df <- df %>%
-  mutate(across(c("Sample", "Bear"), as.factor))
-
-df <- df %>%
-  mutate(Season = case_when(
-    doy >= 137 & doy < 237  ~ "Early season",   #Samples from 1st June - 31st July
-#    doy >= 197 & doy < 243 ~ "Late_summer", #Samples from 16th of July-1st of sep
-    doy >= 237 & doy <= 284 ~ "Late season", #Samples from 1st of sep-11th of October
+  mutate(TrophicGroup = case_when(
+    Genus %in% carni_names ~ "P",
+    Genus %in% copro_names ~ "C",
     TRUE ~ NA_character_
   ))
 
-#Make months numeric
-df$new_month <- as.integer(format(as.Date(df$date), "%m")) - 4
+unique(df$Genus[is.na(df$TrophicGroup)]) #All genera included!
 
-#remove rows with no species
-df <- df %>%
-  mutate(across(26:129, ~ replace_na(.x, 0)))
-df$rowsum <- rowSums(df[,26:129])
-df <- df[df$rowsum != 0, ]
+#Octave analysis
 
-df$North <- as.numeric(df$North)
-df$Season <- as.factor(df$Season)
-df$doy <- as.numeric(df$doy)
+#First calculate total abundance per species
+df_abu <- df %>%
+  group_by(Species, TrophicGroup) %>%
+  summarize(
+    abundance = sum(Count)
+  )
 
-df_clean <- df %>%
-  dplyr::select(-rowsum) %>% 
-  filter(!is.na(days_old_avg),
-         !is.na(North),
-         !is.na(doy),
-         !is.na(Season))
+#Next divide into octaves
+make_octaves <- function(df_abu, abundance, TrophicGroup) {
+  
+  df_abu %>%
+    ungroup() %>%
+    mutate(
+      abundance = as.numeric({{ abundance }}),
+      octave = floor(log2(abundance)) + 1
+    ) %>%
+    filter(!is.na(octave), abundance > 0) %>%
+    
+    group_by({{TrophicGroup}}, octave) %>%
+    
+    count(name = "n_species") %>%
+    
+    ungroup() %>%
+    
+    complete(
+      {{TrophicGroup}},
+      octave = full_seq(octave, 1),
+      fill = list(n_species = 0)
+    ) %>%
+    arrange({{TrophicGroup}}, octave)
+}
 
-#keep only columns with species occurences
+# Ensure ungrouped
+df_abu <- df_abu %>% ungroup()
 
-keep <- colSums(df_clean[, 26:129]) > 0
+octaves_bear <- make_octaves(df_abu, abundance, TrophicGroup)
 
-df_clean <- df_clean[, c(c(1:25, 130:137), which(keep) + 25)]
+#Repeat for Hanski data
 
-meta_df <- df_clean[,1:33]
-species_df <- df_clean[,34:136] 
+Hanski_df <- read.csv("Hanski_data.csv", sep = ";")
+
+Hanski_df$TrophicGroup <- as.factor(Hanski_df$TrophicGroup)
+
+make_hanski_octaves <- function(Hanski_df, Abundance, TrophicGroup) {
+  
+  Hanski_df %>%
+    ungroup() %>%
+    mutate(
+      abundance = as.numeric({{ Abundance }}),
+      octave = floor(log2(abundance)) + 1
+    ) %>%
+    filter(!is.na(octave), abundance > 0) %>%
+    
+    group_by({{TrophicGroup}}, octave) %>%
+    
+    count(name = "n_species") %>%
+    
+    ungroup() %>%
+    
+    complete(
+      {{TrophicGroup}},
+      octave = full_seq(octave, 1),
+      fill = list(n_species = 0)
+    ) %>%
+    arrange({{TrophicGroup}}, octave)
+}
+
+octaves_cow <- make_hanski_octaves(Hanski_df, Abundance, TrophicGroup)
+
+bear_plot1 <- ggplot(octaves_bear, aes(x = octave, y = n_species)) +
+  geom_col() +
+  facet_wrap(~TrophicGroup) +
+  theme_classic() +
+  scale_y_continuous(limits = c(0,25)) +
+  scale_x_continuous(limits = c(0,11), breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    title = "Bear feces",
+    x = "Octave",
+    y = "Species count"
+  ) +
+theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    title = element_text(size = 14, vjust = 0.5)
+  )
+
+bear_plot1
+
+cow_plot1 <- ggplot(octaves_cow, aes(x = octave, y = n_species)) +
+  geom_col() +
+  facet_wrap(~TrophicGroup) +
+  scale_x_continuous(limits = c(0,15), breaks = scales::pretty_breaks(n = 8)) +
+  theme_classic() +
+  labs(
+    title = "Cow feces",
+    x = "Octave",
+    y = "Species count"
+  ) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_blank(),
+    axis.text = element_text(size = 12),
+    title = element_text(size = 14, vjust = 0.5)
+  )
+
+octaveplots <- bear_plot1 + cow_plot1
+
+octaveplots
+
+#Using Hanski's niche width
+
+#Calculate for all speices for coprophages, 
+#but only if above 5 individuals for carnivores
+
+#Define environmental variables
+df_wide <- read.csv("df_prepped.csv", sep = ",")
+
+species_df <- df_wide[,35:137] 
+
+species_mat <- as.matrix(species_df)
+storage.mode(species_mat) <- "numeric"
+
+dung_age <- as.numeric(df_clean$days_old_avg)
+Month <- as.numeric(df_clean$new_month)
+
+succession <- colSums(species_mat  * dung_age) / colSums(species_mat )
+Wsucc <- colSums(
+  species_mat * (outer(dung_age, rep(1, ncol(species_mat))) - 
+                   matrix(succession, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                          byrow = TRUE))^2
+) / colSums(species_mat)
+
+
+Season <- colSums(species_mat  * Month) / colSums(species_mat )
+Wseas <- colSums(
+  species_mat * (outer(Month, rep(1, ncol(species_mat))) - 
+                   matrix(Season, nrow = nrow(species_mat), ncol = ncol(species_mat),
+                          byrow = TRUE))^2
+) / colSums(species_mat)
+
+
+dung_data <- data.frame(
+  species = colnames(species_df),
+  succession = succession,
+  Wsucc_b = Wsucc,
+  Season = Season,
+  Wseas_b = Wseas
+)
+
+#scale w values to 0-1 scale
+scale_01 <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+}
+
+dung_data$Wseas   <- scale_01(dung_data$Wseas_b)
+dung_data$Wsucc <- scale_01(dung_data$Wsucc_b)
+
+dung_data <- dung_data %>%
+  mutate(Genus = word(species, 1, sep = "_")) %>%
+  mutate(TrophicGroup = case_when(
+    Genus %in% carni_names ~ "P",
+    Genus %in% copro_names ~ "C",
+    TRUE ~ NA_character_
+  )) %>% 
+  mutate(succession_int = round(succession))
+
+bear_suc <- ggplot(dung_data, aes(x = succession_int)) +
+  geom_bar() +
+  facet_wrap(~TrophicGroup) +
+  scale_x_continuous(limits = c(0,25), breaks = scales::pretty_breaks(n = 6)) +
+  theme_classic() +
+  labs(
+    x = "Dung age",
+    y = "Species count"
+  ) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text = element_text(size = 12),
+  )
+
+cow_suc <- ggplot(Hanski_df, aes(x = round(Succession))) +
+  geom_bar() +
+  facet_wrap(~TrophicGroup) +
+  scale_x_continuous(limits = c(0,25), breaks = scales::pretty_breaks(n = 6)) +
+  theme_classic() +
+  labs(
+    x = "Dung age",
+    y = "Species count"
+  ) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_blank(),
+    axis.text = element_text(size = 12),
+  )
+
+suc_plots <- bear_suc + cow_suc
+
+suc_plots
+
+#Niche width
+
+#Extract mean values per succession day
+
+Hanski_df$Succession_int <- round(Hanski_df$Succession)
+
+niche_means <- Hanski_df %>%
+  group_by(Succession_int, TrophicGroup) %>% 
+  summarize(
+    niche_mean = mean(Wsucc)
+  ) %>% 
+  na.omit()
+
+cow_width <- ggplot(niche_means, aes(x = Succession_int, y = niche_mean)) +
+  geom_point() +
+  facet_wrap(~TrophicGroup) +
+  theme_classic() +
+  labs(
+    x = "Dung age",
+    y = "Species count"
+  ) +
+  scale_y_continuous(limits= c(0,1), n.breaks = 6) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_blank(),
+    axis.text = element_text(size = 12)
+  )
+
+cow_width
+
+niche_means_b <- dung_data %>%
+  group_by(succession_int, TrophicGroup) %>% 
+  summarize(
+    niche_mean = mean(Wsucc)
+  ) %>% 
+  na.omit()
+
+bear_width <- ggplot(niche_means_b, aes(x = succession_int, y = niche_mean)) +
+  geom_point() +
+  facet_wrap(~TrophicGroup) +
+  theme_classic() +
+  scale_y_continuous(limits= c(0,1), n.breaks = 6) +
+  labs(
+    x = "Dung age",
+    y = "Mean niche width"
+  ) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+bear_width
+
+width_plots <- bear_width + cow_width
+
+all_plots <-  octaveplots / suc_plots / width_plots
+
+all_plots
+
+ggsave(all_plots, filename = "trial_plots.png", dpi = 300,
+       width = 10.56, height = 13)
+
+#Add family ID
+dung_data <- dung_data %>%
+  
+  left_join(family_lookup, by = "Genus")
+
+#Add abundances
+total_abu <- df_long %>% 
+  group_by(Species) %>% 
+  summarize(
+    Total = sum(Count)
+  )
+
+names(total_abu) <- c("species", "Abundance")
+
+dung_df <-merge(dung_data, total_abu, by = "species")
+
+#Combine with Hanski cow data
+
+cow_df <- read.csv("Hanski_data.csv", sep = ";")
+
+
+
+
+
+
 
 
 ##RDA
+
+meta_df <- df_clean[,1:33]
+species_df <- df_clean[,34:136] 
 
 x <- decostand(species_df, "hellinger")
 rda_mod <- rda(x ~ days_old_avg * Season + North, data = df_clean)
@@ -264,33 +554,8 @@ abu_rich <- ggplot(df_richness, aes(x = abundance, y = sp_richness)) +
 ggsave(abu_rich, filename = "abundanceRichness_bearfeces.png", dpi = 300, height = 5.26,
        width = 7.5)
 
-family_lookup <- tibble(
-  Genus = c("Geotrupes", "Sciodrepoides", "Catops", "Nargus", "Aphodius", "Sphaeridium",
-            "Megasternum",  "Anacaena", 
-            "Cercyon", "Cryptopleurum", "Pteryx", "Ptiliolum", "Baeocrara", "Acrotrichis", "Atheta", "Acrotona", "Aleochara",
-            "Omalium", "Anopleta", "Anotylus", "Anthobium", "Anthophagus", "Autalia",
-            "Bisnius", "Deliphrum", "Euaesthetus", "Gabrius", "Gyrohypnus",
-            "Liogluta", "Megarthrus", "Oxypoda", "Oxytelus", "Pachyatheta",
-            "Philonthus", "Platystethus", "Proteinus", "Scaphisoma",
-            "Tachinus", "Xylodromus"
-            ),
-  Family = c("Geotrupidae", "Leiodidae", "Leiodidae", "Leiodidae", "Scarabaeidae", "Hydrophilidae",
-             "Hydrophilidae", "Hydrophilidae", "Hydrophilidae", "Hydrophilidae",
-             "Ptilidae", "Ptilidae", "Ptilidae",
-             "Ptilidae", "Staphylinidae", "Staphylinidae", "Staphylinidae",
-             "Staphylinidae", "Staphylinidae",  "Staphylinidae", "Staphylinidae", "Staphylinidae",
-             "Staphylinidae", "Staphylinidae",  "Staphylinidae", "Staphylinidae", "Staphylinidae",
-             "Staphylinidae", "Staphylinidae",  "Staphylinidae", "Staphylinidae", "Staphylinidae",
-             "Staphylinidae", "Staphylinidae",  "Staphylinidae", "Staphylinidae", "Staphylinidae",
-             "Staphylinidae", "Staphylinidae")
-)
-
-df_long <- df_long %>%
-  mutate(Genus = word(Species, 1, sep = "\\.")) %>%
-  left_join(family_lookup, by = "Genus")
-
 df_sum <- df_long %>% 
-  group_by(Family.y) %>%
+  group_by(Family) %>%
   summarize(
     fam_richness = n_distinct(Species),
     fam_abundance = sum(Count)
@@ -424,62 +689,3 @@ testZeroInflation(sim_res)
 
 
 ####Comparison to Hanski data
-#Define environmental variables
-
-species_mat <- as.matrix(species_df)
-storage.mode(species_mat) <- "numeric"
-
-dung_age <- as.numeric(df_clean$days_old_avg)
-Month <- as.numeric(df_clean$new_month)
-
-succession <- colSums(species_mat  * dung_age) / colSums(species_mat )
-Wsucc <- colSums(
-  species_mat * (outer(dung_age, rep(1, ncol(species_mat))) - 
-                   matrix(succession, nrow = nrow(species_mat), ncol = ncol(species_mat),
-                          byrow = TRUE))^2
-) / colSums(species_mat)
-
-
-Season <- colSums(species_mat  * Month) / colSums(species_mat )
-Wseas <- colSums(
-  species_mat * (outer(Month, rep(1, ncol(species_mat))) - 
-                   matrix(Season, nrow = nrow(species_mat), ncol = ncol(species_mat),
-                          byrow = TRUE))^2
-) / colSums(species_mat)
-
-
-dung_data <- data.frame(
-  species = colnames(species_df),
-  succession = succession,
-  Wsucc_b = Wsucc,
-  Season = Season,
-  Wseas_b = Wseas
-)
-
-#scale w values to 0-1 scale
-scale_01 <- function(x) {
-  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
-}
-
-dung_data$Wseas   <- scale_01(dung_data$Wseas_b)
-dung_data$Wsucc <- scale_01(dung_data$Wsucc_b)
-
-#Add family ID
-dung_data <- dung_data %>%
-  mutate(Genus = word(species, 1, sep = "_")) %>%
-  left_join(family_lookup, by = "Genus")
-
-#Add abundances
-total_abu <- df_long %>% 
-  group_by(Species) %>% 
-  summarize(
-    Total = sum(Count)
-  )
-
-names(total_abu) <- c("species", "Abundance")
-
-dung_df <-merge(dung_data, total_abu, by = "species")
-
-#Combine with Hanski cow data
-
-cow_df <- read.csv("Hanski_data.csv", sep = ";")
